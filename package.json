@@ -1,0 +1,15 @@
+{
+  "name": "study-helper",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/local-dev.mjs",
+    "dev": "wrangler dev --ip 0.0.0.0 --port 8080",
+    "deploy": "wrangler deploy",
+    "check": "node scripts/self-check.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.152.0"
+  }
+}

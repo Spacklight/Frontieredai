@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "study-helper",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  // Non-secret settings. Change GITHUB_OWNER before deploy.
+  // Secrets (do not put them here): GEMINI_API_KEY, GITHUB_TOKEN, AUTH_SECRET.
+  "vars": {
+    "GITHUB_OWNER": "your-github-username",
+    "GITHUB_REPO": "aidata",
+    "GITHUB_BRANCH": "main",
+    "GEMINI_MODEL": "gemini-3.5-flash-lite"
+  }
+}

@@ -1,0 +1,8 @@
+# Copy to .dev.vars and fill in. Never commit .dev.vars.
+GEMINI_API_KEY=
+GITHUB_TOKEN=
+AUTH_SECRET=replace-with-a-long-random-string
+GITHUB_OWNER=your-github-username
+GITHUB_REPO=aidata
+GITHUB_BRANCH=main
+GEMINI_MODEL=gemini-3.5-flash-lite
