@@ -6,3 +6,7 @@ GITHUB_OWNER=your-github-username
 GITHUB_REPO=aidata
 GITHUB_BRANCH=main
 GEMINI_MODEL=gemini-3.5-flash-lite
+# Password for /admin.html (the admin dashboard). Pick something long.
+ADMIN_SECRET=
+# Optional: encrypts the API keys you add in the dashboard. Defaults to AUTH_SECRET.
+# POOL_SECRET=

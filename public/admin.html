@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Study Helper — Admin</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,560;9..144,680&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/admin.css">
+</head>
+<body>
+  <div id="toast-root" aria-live="polite"></div>
+
+  <section id="login" class="screen">
+    <form id="form-login" class="card login-card">
+      <p class="eyebrow">Admin</p>
+      <h2>Study Helper control room</h2>
+      <p id="login-note" class="muted">Enter the ADMIN_SECRET you saved in Cloudflare.</p>
+      <label>Admin secret<input name="secret" type="password" autocomplete="current-password" required></label>
+      <button class="btn primary" type="submit">Open dashboard</button>
+    </form>
+  </section>
+
+  <section id="dash" class="screen" hidden>
+    <header class="topbar">
+      <span class="brand-lockup" style="margin:0">Study Helper · Admin</span>
+      <span id="health-pill" class="pill">—</span>
+      <div class="top-actions">
+        <span id="updated" class="muted small"></span>
+        <button type="button" id="refresh" class="btn secondary">Refresh</button>
+        <button type="button" id="logout" class="btn ghost">Sign out</button>
+      </div>
+    </header>
+    <main class="wrap admin-main">
+      <div id="warn" class="banner" hidden></div>
+
+      <div class="stats">
+        <article class="card stat"><p class="eyebrow">Requests today</p><p id="s-used" class="big">—</p><p id="s-cap" class="muted small"></p><div class="meter"><span id="s-meter"></span></div></article>
+        <article class="card stat"><p class="eyebrow">Per-student limit</p><p id="s-limit" class="big">—</p><p id="s-users" class="muted small"></p></article>
+        <article class="card stat"><p class="eyebrow">Live classes</p><p id="s-classes" class="big">—</p><p id="s-queue" class="muted small"></p></article>
+        <article class="card stat"><p class="eyebrow">Per minute now</p><p id="s-rpm" class="big">—</p><p id="s-rpmcap" class="muted small"></p></article>
+      </div>
+
+      <article class="card">
+        <div class="section-head"><div><p class="eyebrow">Models and keys</p><h2>The pool</h2></div></div>
+        <p class="muted small">Each row is one key with one model. Requests are spread to the least busy row, and a row that hits Google's limit rests automatically. Free tier is usually 15 per minute and 500 per day per model — change the numbers if your limits differ.</p>
+        <div class="table-wrap"><table id="pool">
+          <thead><tr><th>Name</th><th>Model</th><th>Key</th><th>Today</th><th>Now</th><th>Status</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+        <h3 class="sub-h">Add a key and models</h3>
+        <form id="form-add" class="add-grid">
+          <label>Name<input name="label" maxlength="60" placeholder="Key from Chikondi's account"></label>
+          <label>Google AI Studio API key<input name="key" type="password" autocomplete="off" required placeholder="AIza…"></label>
+          <label class="span-2">Model names <span class="muted">(one or several, separated by commas — each one is added with its own limits)</span>
+            <input name="models" required value="gemini-3.5-flash-lite" list="model-hints" placeholder="gemini-3.5-flash-lite, gemini-2.5-flash">
+            <datalist id="model-hints">
+              <option value="gemini-3.5-flash-lite"><option value="gemini-3.5-flash"><option value="gemini-2.5-flash-lite"><option value="gemini-2.5-flash">
+            </datalist>
+          </label>
+          <label>Requests per minute<input name="rpm" type="number" min="1" max="2000" value="15"></label>
+          <label>Requests per day<input name="rpd" type="number" min="1" max="200000" value="500"></label>
+          <div class="row-actions span-2"><button class="btn primary" type="submit">Add to pool</button></div>
+        </form>
+        <p class="muted small">Keys are encrypted before they are stored and are never shown again — only the last four characters.</p>
+      </article>
+
+      <div class="two-col">
+        <article class="card">
+          <p class="eyebrow">Limits and turns</p>
+          <h2>Settings</h2>
+          <form id="form-settings" class="settings-grid">
+            <label>Daily requests per student (target)<input name="dailyUserLimit" type="number" min="1" max="1000"></label>
+            <label>Never go below<input name="minUserLimit" type="number" min="1" max="500"></label>
+            <label class="check"><input name="autoScale" type="checkbox"> Shrink the limit automatically when many students join</label>
+            <label>Extra allowance for classes and exercises (%)<input name="criticalBonusPct" type="number" min="0" max="200"></label>
+            <label>Kept back for uploads and lessons (%)<input name="reservePct" type="number" min="0" max="50"></label>
+            <label>Live classes per key/model<input name="slotsPerEntry" type="number" min="1" max="30"></label>
+            <label>Free a class seat after silence (seconds)<input name="classIdleSeconds" type="number" min="30" max="600"></label>
+            <label>Longest class (minutes)<input name="classMaxMinutes" type="number" min="5" max="120"></label>
+            <label>Drop from the waiting line after (seconds)<input name="queuePatienceSeconds" type="number" min="15" max="300"></label>
+            <div class="row-actions"><button class="btn primary" type="submit">Save settings</button></div>
+          </form>
+          <p class="muted small">The counts restart at midnight Malawi time (UTC+2).</p>
+        </article>
+        <article class="card">
+          <p class="eyebrow">Last 7 days</p>
+          <h2>Demand</h2>
+          <div id="history" class="history"></div>
+          <h3 class="sub-h">What the requests were for</h3>
+          <ul id="kinds" class="plain-list"></ul>
+          <h3 class="sub-h">Live classes</h3>
+          <p id="class-people" class="muted"></p>
+        </article>
+      </div>
+
+      <div class="two-col">
+        <article class="card">
+          <p class="eyebrow">Students today</p>
+          <h2>Heaviest users</h2>
+          <div class="table-wrap"><table id="users"><thead><tr><th>Student</th><th>Requests</th></tr></thead><tbody></tbody></table></div>
+        </article>
+        <article class="card">
+          <p class="eyebrow">Problems</p>
+          <h2>Recent errors</h2>
+          <ul id="errors" class="plain-list"></ul>
+        </article>
+      </div>
+    </main>
+  </section>
+  <script src="/admin.js"></script>
+</body>
+</html>

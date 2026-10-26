@@ -2,6 +2,8 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "study-helper",
   "main": "worker.js",
+  "durable_objects": { "bindings": [{ "name": "COORD", "class_name": "Coordinator" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Coordinator"] }],
   "compatibility_date": "2026-10-01",
   "assets": {
     "directory": "./public",

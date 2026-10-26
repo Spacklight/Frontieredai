@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Study Helper</title>
-  <meta name="description" content="Study Helper is an AI tutor with a live chalkboard class in English or Chichewa, a weekly timetable, and graded exercises.">
+  <meta name="description" content="Study Helper is an AI teacher that plans your week, teaches live chalkboard classes in English or Chichewa from your own notes, and sets and grades exercises.">
   <meta property="og:title" content="Study Helper">
   <meta property="og:description" content="A step-by-step tutor with a live chalkboard class in English or Chichewa.">
   <meta property="og:type" content="website">
@@ -27,10 +27,10 @@
           Study Helper
         </p>
         <h1>The class stays on the board until it makes sense.</h1>
-        <p class="lede">Upload the notes you already have. Talk the topic through. Then take it onto a chalkboard — in English or Chichewa — with a timetable that fits the hours you actually have.</p>
+        <p class="lede">Upload the notes you already have. Your teacher reads them, plans your week, teaches on a chalkboard in English or Chichewa, and sets exercises — you never have to tell her what to do.</p>
         <ul class="story-list">
-          <li><strong>Live class</strong><span>Chalk, diagrams, and a voice at a classroom pace.</span></li>
-          <li><strong>Your materials</strong><span>PDFs and Word notes turned into topics.</span></li>
+          <li><strong>A teacher who decides</strong><span>She picks the topic, the pace, and when you practise.</span></li>
+          <li><strong>Only your notes</strong><span>Lessons and exercises come from the PDFs you upload — nothing else.</span></li>
           <li><strong>The week</strong><span>Study blocks cut to your hours and exam date.</span></li>
         </ul>
       </div>
@@ -46,7 +46,7 @@
           <button class="btn primary" type="submit">Log in</button>
         </form>
         <form id="form-register" hidden>
-          <label>Username<input name="username" autocomplete="username" required minlength="3" maxlength="24" pattern="[A-Za-z0-9._-]{3,24}"></label>
+          <label>Username<input name="username" autocomplete="username" required minlength="3" maxlength="24" pattern="[A-Za-z0-9._\-]{3,24}"></label>
           <label>Password<input name="password" type="password" autocomplete="new-password" required minlength="6"></label>
           <label>Confirm password<input name="confirm" type="password" autocomplete="new-password" required minlength="6"></label>
           <button class="btn primary" type="submit">Create account</button>
@@ -64,12 +64,37 @@
       <div class="form-grid">
         <label>Name<input name="name" required maxlength="80" autocomplete="name"></label>
         <label>Age<input name="age" type="number" required min="8" max="100" inputmode="numeric"></label>
-        <label>Grade<input name="grade" required maxlength="40" placeholder="Form 3"></label>
+        <label class="span-2">I am studying at
+          <select name="level" id="profile-level" required>
+            <option value="">Choose…</option>
+            <option value="primary">Primary school</option>
+            <option value="junior-secondary">Junior secondary (JCE, Form 1–2)</option>
+            <option value="senior-secondary">Senior secondary (MSCE, Form 3–4)</option>
+            <option value="college">College / university</option>
+            <option value="other">Something else</option>
+          </select>
+        </label>
+        <label id="grade-label">Class / form<input name="grade" required maxlength="40" placeholder="Form 3"></label>
         <label>Study hours a day<input name="studyHours" type="number" required min="0.5" max="12" step="0.5" value="2"></label>
-        <label class="span-2">Exam date<input name="examDate" type="date" required></label>
+        <label class="span-2">Examination board
+          <select name="boardChoice" id="profile-board" required>
+            <option value="">Choose…</option>
+            <option value="MANEB">MANEB (Malawi National Examinations Board)</option>
+            <option value="Cambridge International">Cambridge (IGCSE / AS / A Level)</option>
+            <option value="Edexcel">Edexcel</option>
+            <option value="IB">International Baccalaureate (IB)</option>
+            <option value="TEVET Malawi">TEVET (Malawi technical and vocational)</option>
+            <option value="University or college exams">My college / university sets the exams</option>
+            <option value="__other">Another board…</option>
+          </select>
+        </label>
+        <label id="board-other-wrap" class="span-2" hidden>Name of the board<input name="boardOther" maxlength="60" placeholder="e.g. WAEC"></label>
+        <label id="institution-wrap" class="span-2" hidden>College or university<input name="institution" maxlength="80" placeholder="e.g. University of Malawi, Chancellor College"></label>
+        <label id="course-wrap" class="span-2" hidden>Programme<input name="course" maxlength="80" placeholder="e.g. BSc Computer Science"></label>
+        <label class="span-2">Exam date <span class="muted">(optional — your teacher plans around it)</span><input name="examDate" type="date"></label>
       </div>
       <fieldset class="subjects">
-        <legend>Subjects</legend>
+        <legend id="subjects-legend">Subjects</legend>
         <div id="subject-chips" class="chips"></div>
         <div class="chip-add">
           <input id="subject-input" maxlength="40" placeholder="Add a subject, then press Add">
@@ -85,23 +110,25 @@
 
   <section id="screen-app" class="screen" hidden>
     <header class="topbar">
-      <button type="button" class="brand-lockup brand-btn" id="go-tutor">
+      <button type="button" class="brand-lockup brand-btn" id="go-home">
         <span class="mark" aria-hidden="true">
           <svg viewBox="0 0 32 32"><rect x="3" y="5" width="26" height="20" rx="3"></rect><path d="M8 20.5V12h5.5M18 20.5V11H25"></path><circle cx="23.5" cy="16" r="2.4"></circle></svg>
         </span>
         <span>Study Helper</span>
       </button>
       <nav class="nav" aria-label="Main">
-        <button type="button" data-nav="tutor" aria-current="page">Tutor</button>
+        <button type="button" data-nav="today" aria-current="page">Today</button>
+        <button type="button" data-nav="tutor">Tutor &amp; notes</button>
         <button type="button" data-nav="timetable">Timetable</button>
-        <button type="button" data-nav="vision">Vision</button>
         <button type="button" data-nav="exercises">Exercises</button>
+        <button type="button" data-nav="vision">Progress</button>
       </nav>
       <div class="top-actions">
         <div class="lang" role="group" aria-label="Teaching language">
           <button type="button" data-lang="en" aria-pressed="true">English</button>
           <button type="button" data-lang="ny" aria-pressed="false">Chichewa</button>
         </div>
+        <span id="quota-pill" class="quota-pill" title="Teacher requests you have left today. They refresh at midnight (Malawi time)." hidden></span>
         <button type="button" id="open-class" class="btn live">Live class</button>
         <button type="button" id="open-info" class="btn icon" aria-label="About Study Helper">i</button>
         <button type="button" id="sign-out" class="btn ghost">Sign out</button>
@@ -111,7 +138,38 @@
     <p id="guest-note" class="wrap guest-note" hidden>Sample chalkboard — nothing is saved. Register to teach from your own notes.</p>
 
     <main class="wrap">
-      <section data-view="tutor" id="view-tutor">
+      <section data-view="today" id="view-today">
+        <div class="today-grid">
+          <article class="card today-main">
+            <p class="eyebrow">Your teacher</p>
+            <h2 id="today-title">Welcome</h2>
+            <p id="today-reason" class="today-reason"></p>
+            <div id="today-health" class="banner" hidden></div>
+            <div class="row-actions">
+              <button type="button" id="today-go" class="btn live">Start class</button>
+              <button type="button" id="today-notes" class="btn secondary" hidden>Upload my notes</button>
+            </div>
+            <p id="today-note" class="muted"></p>
+          </article>
+          <article class="card">
+            <p class="eyebrow">Today</p>
+            <h3 id="today-day">This week</h3>
+            <div id="today-blocks" class="today-blocks"></div>
+          </article>
+          <article class="card">
+            <p class="eyebrow">Teacher requests</p>
+            <div class="meter" aria-hidden="true"><span id="meter-fill"></span></div>
+            <p id="meter-text" class="muted"></p>
+            <p class="muted small">Your teacher uses one request for each lesson, exercise, plan or chat reply. The count starts again at midnight.</p>
+          </article>
+          <article class="card">
+            <p class="eyebrow">From your teacher</p>
+            <ul id="today-announce" class="plain-list"></ul>
+          </article>
+        </div>
+      </section>
+
+      <section data-view="tutor" id="view-tutor" hidden>
         <div class="desk">
           <div class="card chat-card">
             <div class="section-head">
@@ -123,7 +181,7 @@
             <div id="thread" class="thread"></div>
             <form id="form-chat" class="composer">
               <label class="sr-only" for="chat-input">Message</label>
-              <textarea id="chat-input" rows="2" placeholder="Ask about a topic, or paste a question from class" required></textarea>
+              <textarea id="chat-input" rows="2" placeholder="Ask about something in your notes" required></textarea>
               <button class="btn primary" type="submit">Send</button>
             </form>
           </div>
@@ -135,12 +193,13 @@
               </div>
             </div>
             <form id="form-upload" class="upload">
-              <label>Subject hint<input name="subject" maxlength="60" placeholder="Biology"></label>
               <label class="file-btn">
                 <input id="file-input" type="file" accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.webp,application/pdf">
-                <span>Choose PDF or DOCX</span>
+                <span id="file-label">Choose PDF, DOCX or photo</span>
               </label>
-              <button class="btn secondary" type="submit">Extract topics</button>
+              <p class="muted small">Your teacher uses only the notes you upload. Files over 1 MB are split into smaller parts automatically.</p>
+              <button class="btn secondary" type="submit">Add to my notes</button>
+              <p id="upload-status" class="muted small" role="status"></p>
             </form>
             <ul id="material-list" class="material-list"></ul>
           </aside>
@@ -151,9 +210,8 @@
         <div class="section-head">
           <div>
             <p class="eyebrow">Timetable</p>
-            <h2>The week, cut to your hours</h2>
+            <h2>The week your teacher planned</h2>
           </div>
-          <button type="button" id="build-week" class="btn primary">Build this week</button>
         </div>
         <p id="week-summary" class="muted"></p>
         <div id="week-grid" class="week"></div>
@@ -173,7 +231,6 @@
                 <p class="eyebrow">Vision</p>
                 <h2>Where this is headed</h2>
               </div>
-              <button type="button" id="refresh-vision" class="btn secondary">Rewrite</button>
             </div>
             <div id="vision-copy" class="prose"></div>
             <ul id="announce-list" class="plain-list"></ul>
@@ -182,10 +239,8 @@
             <p class="eyebrow">Learned</p>
             <h2>Topics already taught</h2>
             <ul id="learned-list" class="plain-list"></ul>
-            <div id="next-class" class="next-class" hidden>
-              <p id="next-class-copy"></p>
-              <button type="button" id="teach-next" class="btn live">Teach this</button>
-            </div>
+            <h3 class="sub-h">Exercise results</h3>
+            <ul id="results-list" class="plain-list"></ul>
           </article>
         </div>
       </section>
@@ -194,20 +249,22 @@
         <div class="section-head">
           <div>
             <p class="eyebrow">Exercises</p>
-            <h2>Write it, or hand in a sheet</h2>
+            <h2>Practice set by your teacher</h2>
           </div>
         </div>
-        <form id="form-exercise" class="card inline-form">
-          <label>Subject<input name="subject" required maxlength="60"></label>
-          <label>Topic<input name="topic" required maxlength="140" placeholder="Angles on a straight line"></label>
-          <button class="btn primary" type="submit">Generate</button>
+        <form id="form-exercise" class="card ask-exercise">
+          <p id="exercise-intro" class="muted">After each class your teacher decides whether you need practice and sets it. You can also ask for practice any time — she chooses the topic and how many questions.</p>
+          <div class="row-actions">
+            <button class="btn primary" type="submit">Give me practice</button>
+          </div>
         </form>
+        <p id="exercise-meta" class="muted"></p>
         <form id="form-answers" class="stack" hidden>
           <h3 id="exercise-title"></h3>
           <div id="question-list" class="stack"></div>
           <label class="file-btn">
             <input id="answer-file" type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,application/pdf">
-            <span>Optional answer sheet (PDF or photo)</span>
+            <span id="answer-file-label">Optional answer sheet (PDF or photo, up to 1 MB)</span>
           </label>
           <button class="btn primary" type="submit">Grade</button>
         </form>
@@ -221,17 +278,21 @@
       <section data-view="class" id="view-class" hidden>
         <div id="class-setup" class="card class-setup">
           <p class="eyebrow">Live class</p>
-          <h2>Fifteen minutes, one topic</h2>
+          <h2 id="class-headline">Your teacher is ready when you are</h2>
           <p class="muted" id="class-lang-note"></p>
-          <form id="form-class" class="stack">
-            <label>Subject<input name="subject" required maxlength="60"></label>
-            <label>Topic<input name="topic" required maxlength="140" placeholder="Photosynthesis, or angles on a straight line"></label>
+          <p id="class-plan" class="today-reason"></p>
+          <div id="class-queue" class="queue-box" hidden>
+            <p id="queue-text" class="queue-text"></p>
+            <div class="queue-dots" aria-hidden="true"><i></i><i></i><i></i></div>
             <div class="row-actions">
-              <button class="btn live" type="submit" id="start-class">Start class</button>
-              <button class="btn secondary" type="button" id="suggest-topic">Suggest a topic</button>
-              <button class="btn ghost" type="button" id="sample-class">Sample board</button>
+              <button type="button" id="queue-notes" class="btn secondary">Read my notes while I wait</button>
+              <button type="button" id="queue-leave" class="btn ghost">Leave the line</button>
             </div>
-          </form>
+          </div>
+          <div class="row-actions" id="class-start-row">
+            <button class="btn live" type="button" id="start-class">Start class</button>
+            <button class="btn ghost" type="button" id="sample-class">Sample board</button>
+          </div>
         </div>
         <div id="class-room" hidden>
           <div class="class-meta">
@@ -280,14 +341,15 @@
         <button class="btn icon" value="close" aria-label="Close">×</button>
       </header>
       <div class="prose">
-        <p>Study Helper is a tutor for the syllabus you upload. Accounts, notes, timetables, and exercise keys are JSON files in your GitHub repository. Passwords are stored as SHA-256 hashes, never as plain text.</p>
+        <p>Study Helper is a teacher that works only from the notes you upload. Accounts, outlines and notes are JSON files in your GitHub repository. Passwords are stored as SHA-256 hashes.</p>
         <ol>
-          <li>Register, then add your name, grade, subjects, exam date, and how many hours you can study.</li>
-          <li>Upload a PDF or DOCX. Topics are read by Gemini and kept as an outline — the file itself is not stored.</li>
-          <li>Chat on the tutor desk when you want a hint instead of the whole answer.</li>
-          <li>Live class asks you to confirm English or Chichewa, then draws the lesson in chalk. Speech plays at rate 0.65 after the writing finishes.</li>
-          <li>Raise hand uses the microphone (<code>webkitSpeechRecognition</code> when the browser has it). You can always type instead.</li>
-          <li>Exercises can be typed or handed in as a photo or PDF. Grading stays on the server so the answer key is not sent to the browser.</li>
+          <li>Register and tell the app your level, exam board (for example MANEB, or your college), subjects and study hours.</li>
+          <li>Upload your notes. A PDF over 1 MB is split into parts in your browser. Your teacher reads them and keeps the content.</li>
+          <li><strong>Today</strong> shows what your teacher decided: the next class, practice, or revision. You never have to pick a topic.</li>
+          <li>Live class draws the lesson in chalk and speaks it slowly in English or Chichewa. When many students are online, classes run in turns and you wait in line.</li>
+          <li>Raise hand uses the microphone when the browser has it. You can always type.</li>
+          <li>After a class your teacher decides whether to set an exercise. You can type your answers or hand in a photo or PDF (up to 1 MB).</li>
+          <li>Each student gets a fair number of teacher requests every day. The count refreshes at midnight, Malawi time.</li>
         </ol>
         <p>Chichewa speech uses a <code>ny-MW</code> voice when the device has one. If it does not, the words are still Chichewa and the device voice does its best.</p>
       </div>

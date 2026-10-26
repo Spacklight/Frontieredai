@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync, renameSync } from "node:fs";
 import { extname, join, resolve, sep } from "node:path";
 import { webcrypto } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -61,8 +61,30 @@ function serveAsset(request) {
   return new Response(readFileSync(target), { headers: { "content-type": type } });
 }
 
+/** Keeps the coordinator (key pool, limits, usage) in a local file so Termux restarts do not lose it. */
+function fileStorage(file) {
+  let data = {};
+  try { data = JSON.parse(readFileSync(file, "utf8")); } catch { data = {}; }
+  let timer = null;
+  const flush = () => {
+    timer = null;
+    try {
+      writeFileSync(file + ".tmp", JSON.stringify(data));
+      renameSync(file + ".tmp", file);
+    } catch (err) { console.error("could not save", file, err.message); }
+  };
+  return {
+    async get(key) { return key in data ? structuredClone(data[key]) : undefined; },
+    async put(key, value) {
+      data[key] = structuredClone(value);
+      if (!timer) timer = setTimeout(flush, 500);
+    },
+  };
+}
+
 const env = loadEnv();
 env.ASSETS = { fetch: serveAsset };
+env.COORD_LOCAL = fileStorage(join(root, ".local-coordinator.json"));
 const worker = (await import(new URL("../worker.js", import.meta.url))).default;
 const port = Number(process.env.PORT || 8080);
 const host = process.env.HOST || "0.0.0.0";

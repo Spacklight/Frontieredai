@@ -13,7 +13,17 @@ const state = {
   guest: false,
   exercise: null,
   recog: null,
+  quota: null,
+  planning: false,
+  planNote: "",
+  starting: false,
+  lessonActive: false,
+  beatTimer: null,
+  uploading: false,
 };
+
+const MAX_PART = 1_000_000; // bytes per uploaded part (the server allows 1 MB)
+const TEXT_CHUNK = 55_000; // characters per text part (the server reads 60,000)
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -132,9 +142,12 @@ async function api(path, { method = "GET", json, form, auth = true } = {}) {
     localStorage.removeItem("sh_token");
     showScreen("auth");
   }
+  if (data.quota) setQuota(data.quota);
   if (!res.ok) {
     const error = new Error(data.error || "Request failed");
     error.status = res.status;
+    error.data = data;
+    if (data.code === "user_quota" && state.quota) setQuota({ ...state.quota, remaining: 0, used: state.quota.limit });
     throw error;
   }
   return data;
@@ -147,7 +160,7 @@ function showScreen(name) {
 }
 
 function profileComplete(profile) {
-  return Boolean(profile && profile.name && profile.grade && profile.examDate && profile.age && profile.subjects?.length);
+  return Boolean(profile && profile.name && profile.grade && profile.level && profile.examBoard && profile.age && profile.subjects?.length);
 }
 
 function setLanguage(lang) {
@@ -157,19 +170,20 @@ function setLanguage(lang) {
   const note = $("#class-lang-note");
   if (note) {
     note.textContent = state.language === "ny"
-      ? "This class will be taught in Chichewa. Speech uses a Chichewa voice when the device has one."
-      : "This class will be taught in English. You can switch to Chichewa before you start.";
+      ? "Your teacher will teach in Chichewa. Speech uses a Chichewa voice when the device has one."
+      : "Your teacher will teach in English. Switch to Chichewa at the top if you prefer.";
   }
 }
 
 function showView(name) {
-  if (name !== "class") stopLesson();
+  if (name !== "class" && state.lessonActive) leaveClass();
   $$("[data-view]").forEach((view) => { view.hidden = view.dataset.view !== name; });
   $$("[data-nav]").forEach((button) => button.setAttribute("aria-current", button.dataset.nav === name ? "page" : "false"));
+  if (name === "today") renderToday();
   if (name === "timetable") renderTimetable();
   if (name === "vision") renderVision();
-  if (name === "exercises") prepExerciseForm();
-  if (name === "class") prepClassForm();
+  if (name === "exercises") renderExerciseView();
+  if (name === "class") renderClassSetup();
 }
 
 function busy(button, on, label) {
@@ -183,6 +197,40 @@ function busy(button, on, label) {
     button.disabled = false;
   }
 }
+
+/* ---------- daily teacher-request meter ---------- */
+
+function setQuota(quota) {
+  state.quota = { ...(state.quota || {}), ...quota };
+  renderQuota();
+}
+
+function untilText(resetAt) {
+  const ms = (resetAt || 0) - Date.now();
+  if (ms <= 0) return "soon";
+  const hours = Math.floor(ms / 3600000);
+  const minutes = Math.round((ms % 3600000) / 60000);
+  return hours > 0 ? `${hours} h ${minutes} min` : `${Math.max(1, minutes)} min`;
+}
+
+function renderQuota() {
+  const pill = $("#quota-pill");
+  const q = state.quota;
+  if (!q || q.limit === undefined || state.guest) {
+    pill.hidden = true;
+    return;
+  }
+  const remaining = Math.max(0, q.limit - q.used);
+  pill.hidden = false;
+  pill.textContent = `${remaining} left today`;
+  pill.dataset.low = String(remaining <= Math.max(2, Math.round(q.limit * 0.15)));
+  const fill = $("#meter-fill");
+  if (fill) fill.style.width = `${Math.min(100, Math.round((q.used / Math.max(1, q.limit)) * 100))}%`;
+  const text = $("#meter-text");
+  if (text) text.textContent = `${q.used} of ${q.limit} used today · refreshes in ${untilText(q.resetAt)} (midnight, Malawi time)`;
+}
+
+/* ---------- profile ---------- */
 
 function renderSubjects() {
   const host = $("#subject-chips");
@@ -204,16 +252,52 @@ function renderSubjects() {
   });
 }
 
+const BOARD_OPTIONS = ["MANEB", "Cambridge International", "Edexcel", "IB", "TEVET Malawi", "University or college exams"];
+
+function updateLevelUI() {
+  const form = $("#form-profile");
+  const level = form.level.value;
+  const college = level === "college";
+  $("#institution-wrap").hidden = !college;
+  $("#course-wrap").hidden = !college;
+  $("#grade-label").firstChild.textContent = college ? "Year / semester" : "Class / form";
+  form.grade.placeholder = college ? "Year 2, Semester 1" : "Form 3";
+  $("#subjects-legend").textContent = college ? "Courses / modules" : "Subjects";
+  $("#subject-input").placeholder = college ? "Add a course, then press Add" : "Add a subject, then press Add";
+  if (!form.boardChoice.value) {
+    if (college) form.boardChoice.value = "University or college exams";
+    else if (level === "junior-secondary" || level === "senior-secondary" || level === "primary") form.boardChoice.value = "MANEB";
+  }
+  updateBoardUI();
+}
+
+function updateBoardUI() {
+  const form = $("#form-profile");
+  const other = form.boardChoice.value === "__other";
+  $("#board-other-wrap").hidden = !other;
+  form.boardOther.required = other;
+}
+
 function fillProfileForm() {
   const form = $("#form-profile");
   const profile = state.profile || {};
   form.name.value = profile.name || "";
   form.age.value = profile.age || "";
+  form.level.value = profile.level || "";
   form.grade.value = profile.grade || "";
+  form.institution.value = profile.institution || "";
+  form.course.value = profile.course || "";
   form.examDate.value = profile.examDate || "";
   form.studyHours.value = profile.studyHours || 2;
+  if (!profile.examBoard) form.boardChoice.value = "";
+  else if (BOARD_OPTIONS.includes(profile.examBoard)) form.boardChoice.value = profile.examBoard;
+  else {
+    form.boardChoice.value = "__other";
+    form.boardOther.value = profile.examBoard;
+  }
   state.subjects = [...(profile.subjects || [])];
   renderSubjects();
+  updateLevelUI();
 }
 
 function enterApp() {
@@ -221,17 +305,13 @@ function enterApp() {
   $("#guest-note").hidden = true;
   $("#sign-out").textContent = "Sign out";
   showScreen("app");
-  const name = state.profile?.name || state.profile?.username || "";
-  $("#tutor-title").textContent = name ? `What are we taking next, ${name.split(" ")[0]}?` : "Ask one step at a time";
   if (!$("#thread").childElementCount) {
-    addMessage("assistant", "Bring a question or a page from your notes. I will take one step, then you try the next.");
+    addMessage("assistant", "Ask me about anything in your notes. I answer only from what you uploaded, and I will point you to the next step.");
   }
   renderMaterials();
-  renderTimetable();
-  renderVision();
-  prepClassForm();
-  prepExerciseForm();
-  showView("tutor");
+  renderQuota();
+  showView("today");
+  ensurePlan();
 }
 
 function addMessage(role, text) {
@@ -253,7 +333,7 @@ function renderMaterials() {
   if (!state.materials.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
-    empty.textContent = "No notes yet. Upload a PDF or DOCX and I will pull out the topics.";
+    empty.textContent = "No notes yet. Upload a PDF, DOCX or photo and your teacher will read it.";
     list.append(empty);
     return;
   }
@@ -263,7 +343,8 @@ function renderMaterials() {
     const title = document.createElement("h3");
     title.textContent = material.name;
     const meta = document.createElement("p");
-    meta.textContent = material.subject;
+    const parts = material.parts > 1 ? ` · ${material.partsDone || material.parts} of ${material.parts} parts` : "";
+    meta.textContent = `${material.subject}${parts}`;
     const topics = document.createElement("p");
     topics.className = "subtopics";
     topics.textContent = (material.topics || []).map((topic) => topic.name).join(" · ");
@@ -276,6 +357,7 @@ function renderMaterials() {
         await api("/api/materials", { method: "DELETE", json: { id: material.id } });
         state.materials = state.materials.filter((row) => row.id !== material.id);
         renderMaterials();
+        renderToday();
       } catch (err) { toast(err.message); }
     });
     item.append(title, meta, topics, remove);
@@ -283,19 +365,140 @@ function renderMaterials() {
   });
 }
 
+/* ---------- the teacher decides: Today, plan, timetable ---------- */
+
+async function ensurePlan(force = false) {
+  if (state.guest || state.planning || !state.materials.length) return;
+  if (!force && !state.teacher?.planStale) return;
+  state.planning = true;
+  state.planNote = "";
+  renderToday();
+  try {
+    const data = await api("/api/teacher/plan", { method: "POST", json: { language: state.language } });
+    state.teacher = data.teacher;
+  } catch (err) {
+    state.planNote = err.message;
+  } finally {
+    state.planning = false;
+    renderToday();
+    if (!$("#view-timetable").hidden) renderTimetable();
+    if (!$("#view-vision").hidden) renderVision();
+  }
+}
+
+const ACTIVITY_LABEL = { class: "Class", exercise: "Practice", revision: "Revision", reading: "Reading" };
+
+function todayName() {
+  return new Date().toLocaleDateString("en-US", { weekday: "long" });
+}
+
+function renderToday() {
+  if ($("#view-today").hidden && !state.profile) return;
+  const t = state.teacher || {};
+  const hasNotes = state.materials.length > 0;
+  const first = (state.profile?.name || state.profile?.username || "").split(" ")[0];
+  const title = $("#today-title");
+  const reason = $("#today-reason");
+  const go = $("#today-go");
+  const notesBtn = $("#today-notes");
+  const note = $("#today-note");
+  go.hidden = false;
+  go.disabled = false;
+  notesBtn.hidden = true;
+  note.textContent = "";
+  const pending = (t.exercises || []).find((e) => !e.graded);
+  if (!hasNotes) {
+    title.textContent = first ? `Let's begin, ${first}` : "Let's begin";
+    reason.textContent = "Upload your notes — PDFs, Word files or photos. I read them, plan your week, and start teaching. I teach only from what you give me.";
+    go.hidden = true;
+    notesBtn.hidden = false;
+  } else if (state.planning) {
+    title.textContent = "Your teacher is planning…";
+    reason.textContent = "Reading your notes and working out what you should do first.";
+    go.disabled = true;
+    go.textContent = "One moment";
+  } else if (pending) {
+    title.textContent = `Practice waiting: ${pending.topic}`;
+    reason.textContent = "Your teacher set this exercise for you. Finish it so she can see how the topic went.";
+    go.textContent = "Open the exercise";
+    go.dataset.action = "exercise-open";
+  } else if (t.next?.topic) {
+    const label = { class: "Next class", exercise: "Practice", revise: "Revision" }[t.next.action] || "Next";
+    title.textContent = `${label}: ${t.next.topic}`;
+    reason.textContent = t.next.reason || "";
+    go.textContent = t.next.action === "exercise" ? "Get my practice" : t.next.action === "revise" ? "Start revision class" : "Start class";
+    go.dataset.action = t.next.action === "exercise" ? "exercise-new" : "class";
+  } else {
+    title.textContent = first ? `Ready when you are, ${first}` : "Ready when you are";
+    reason.textContent = "Your teacher will choose the first topic from your notes.";
+    go.textContent = "Start class";
+    go.dataset.action = "class";
+  }
+  if (state.planNote) note.textContent = state.planNote;
+  const health = state.quota?.health;
+  const banner = $("#today-health");
+  banner.hidden = !health?.message;
+  banner.textContent = health?.message || "";
+  $("#today-day").textContent = todayName();
+  const blocks = $("#today-blocks");
+  blocks.innerHTML = "";
+  const day = (t.timetable?.days || []).find((d) => String(d.day).toLowerCase() === todayName().toLowerCase());
+  if (!day?.blocks?.length) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = t.timetable?.days?.length ? "A lighter day — rest, or revise what you have learned." : "Your teacher will fill this in after she plans your week.";
+    blocks.append(p);
+  } else {
+    day.blocks.forEach((block) => blocks.append(blockNode(block)));
+  }
+  const list = $("#today-announce");
+  list.innerHTML = "";
+  const items = t.announcements || [];
+  if (!items.length) {
+    const li = document.createElement("li");
+    li.className = "muted";
+    li.textContent = "Nothing yet.";
+    list.append(li);
+  }
+  items.forEach((item) => {
+    const li = document.createElement("li");
+    li.textContent = item.text || item;
+    list.append(li);
+  });
+  renderQuota();
+}
+
+function blockNode(block) {
+  const node = document.createElement("div");
+  node.className = `block act-${block.activity || "reading"}`;
+  const when = document.createElement("strong");
+  when.textContent = [block.start, block.end].filter(Boolean).join("–");
+  const tag = document.createElement("em");
+  tag.textContent = ACTIVITY_LABEL[block.activity] || "";
+  const task = document.createElement("span");
+  task.textContent = `${block.subject ? block.subject + ": " : ""}${block.task}`;
+  node.append(when, tag, task);
+  return node;
+}
+
 function renderTimetable() {
   const grid = $("#week-grid");
   const summary = $("#week-summary");
-  const timetable = state.teacher?.timetable || readLocal("sh_timetable");
+  const timetable = state.teacher?.timetable;
   grid.innerHTML = "";
   if (!timetable?.days?.length) {
-    summary.textContent = "Nothing planned yet. Build a week from your study hours, subjects, and exam date.";
+    summary.textContent = state.materials.length
+      ? (state.planning ? "Your teacher is planning your week…" : "Your teacher will plan your week automatically.")
+      : "Upload your notes first. Your teacher plans the week from them.";
     return;
   }
-  summary.textContent = timetable.summary || "";
+  const when = state.teacher.planUpdatedAt ? ` Updated ${new Date(state.teacher.planUpdatedAt).toLocaleDateString()}. It changes by itself after each class and exercise.` : "";
+  summary.textContent = (timetable.summary || "") + when;
+  const today = todayName().toLowerCase();
   timetable.days.forEach((day) => {
     const card = document.createElement("article");
     card.className = "day";
+    if (String(day.day).toLowerCase() === today) card.classList.add("is-today");
     const title = document.createElement("h3");
     title.textContent = day.day;
     card.append(title);
@@ -305,16 +508,7 @@ function renderTimetable() {
       rest.textContent = "Lighter day";
       card.append(rest);
     }
-    (day.blocks || []).forEach((block) => {
-      const node = document.createElement("div");
-      node.className = "block";
-      const when = document.createElement("strong");
-      when.textContent = [block.start, block.end].filter(Boolean).join("–");
-      const task = document.createElement("span");
-      task.textContent = `${block.subject ? block.subject + ": " : ""}${block.task}`;
-      node.append(when, task);
-      card.append(node);
-    });
+    (day.blocks || []).forEach((block) => card.append(blockNode(block)));
     grid.append(card);
   });
 }
@@ -334,7 +528,7 @@ function renderVision() {
   const label = $("#countdown-label");
   if (left === null) {
     count.textContent = "—";
-    label.textContent = "Add an exam date on your profile.";
+    label.textContent = "No exam date set. Add one on your profile and your teacher will plan around it.";
   } else if (left > 1) {
     count.textContent = String(left);
     label.textContent = `days until ${profile.examDate}`;
@@ -348,10 +542,10 @@ function renderVision() {
     count.textContent = "Past";
     label.textContent = "That exam date has passed. Update it if there is another paper.";
   }
-  const vision = state.teacher?.vision || readLocal("sh_vision");
+  const vision = state.teacher?.vision;
   const copy = $("#vision-copy");
   copy.className = "prose";
-  copy.innerHTML = markdown(vision?.statement || "Rewrite this when you want a short picture of how the weeks ahead should feel.");
+  copy.innerHTML = markdown(vision?.statement || "Your teacher writes this after she has planned your weeks.");
   const announcements = $("#announce-list");
   announcements.innerHTML = "";
   (state.teacher?.announcements || []).forEach((item) => {
@@ -373,24 +567,47 @@ function renderVision() {
     li.textContent = topic;
     learned.append(li);
   });
-  const pending = state.teacher?.pendingClassSuggestion;
-  const next = $("#next-class");
-  if (pending?.topic) {
-    next.hidden = false;
-    $("#next-class-copy").textContent = pending.subject ? `${pending.subject}: ${pending.topic}` : pending.topic;
-  } else next.hidden = true;
+  const results = $("#results-list");
+  results.innerHTML = "";
+  const rows = state.teacher?.results || [];
+  if (!rows.length) {
+    const li = document.createElement("li");
+    li.className = "muted";
+    li.textContent = "No graded exercises yet.";
+    results.append(li);
+  }
+  rows.slice().reverse().forEach((row) => {
+    const li = document.createElement("li");
+    li.textContent = `${row.topic}: ${row.score} / ${row.max}`;
+    results.append(li);
+  });
 }
 
-function prepExerciseForm() {
-  const form = $("#form-exercise");
-  if (form.subject && !form.subject.value) form.subject.value = state.profile?.subjects?.[0] || "";
+/* ---------- exercises ---------- */
+
+function renderExerciseView() {
+  const list = state.teacher?.exercises || [];
+  const pending = list.slice().reverse().find((e) => !e.graded);
+  if (pending && (!state.exercise || state.exercise.graded)) {
+    state.exercise = pending;
+    renderQuestions(pending);
+  }
+  const meta = $("#exercise-meta");
+  if (state.exercise && !state.exercise.graded) {
+    meta.textContent = `${state.exercise.subject}: ${state.exercise.topic} · ${state.exercise.difficulty || "medium"} · ${state.exercise.questions.length} questions`;
+  } else meta.textContent = "";
+  $("#form-exercise button").textContent = state.exercise && !state.exercise.graded ? "Give me different practice" : "Give me practice";
 }
 
-function prepClassForm() {
-  const form = $("#form-class");
-  if (!form.subject.value) form.subject.value = state.profile?.subjects?.[0] || state.teacher?.pendingClassSuggestion?.subject || "";
-  if (!form.topic.value && state.teacher?.pendingClassSuggestion?.topic) form.topic.value = state.teacher.pendingClassSuggestion.topic;
-  setLanguage(state.language);
+async function requestExercise(topicHint) {
+  const data = await api("/api/exercises/generate", {
+    method: "POST",
+    json: { language: state.language, topic: topicHint || "" },
+  });
+  state.exercise = data.exercise;
+  state.teacher.exercises = [...(state.teacher.exercises || []), data.exercise].slice(-8);
+  renderQuestions(data.exercise);
+  return data.exercise;
 }
 
 function renderQuestions(exercise) {
@@ -451,8 +668,134 @@ function renderGrade(grade) {
   body.innerHTML = lines.join("");
 }
 
-function readLocal(key) {
-  try { return JSON.parse(localStorage.getItem(key) || "null"); } catch { return null; }
+/* ---------- uploads: split anything bigger than 1 MB ---------- */
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const tag = document.createElement("script");
+    tag.src = src;
+    tag.onload = resolve;
+    tag.onerror = () => reject(new Error("Could not load the PDF splitter. Check your connection and try again."));
+    document.head.append(tag);
+  });
+}
+
+function baseName(name) {
+  return String(name || "notes").replace(/\.[^.]+$/, "");
+}
+
+/** Halves the page range again and again until every part is <= 1 MB. */
+async function splitPdf(file) {
+  if (!window.PDFLib) await loadScript("/vendor/pdf-lib.min.js");
+  const { PDFDocument } = window.PDFLib;
+  let src;
+  try {
+    src = await PDFDocument.load(await file.arrayBuffer(), { ignoreEncryption: true });
+  } catch {
+    throw new Error("That PDF could not be opened for splitting. Try exporting it again.");
+  }
+  const parts = [];
+  async function build(from, to) {
+    const doc = await PDFDocument.create();
+    const pages = await doc.copyPages(src, Array.from({ length: to - from }, (_, i) => from + i));
+    pages.forEach((page) => doc.addPage(page));
+    return doc.save({ useObjectStreams: true });
+  }
+  async function walk(from, to) {
+    const bytes = await build(from, to);
+    if (bytes.length <= MAX_PART) {
+      parts.push({ from, bytes });
+      return;
+    }
+    if (to - from <= 1) {
+      throw new Error(`Page ${from + 1} alone is bigger than 1 MB. Export the PDF at a lower quality and try again.`);
+    }
+    const mid = from + Math.ceil((to - from) / 2);
+    await walk(from, mid);
+    await walk(mid, to);
+  }
+  await walk(0, src.getPageCount());
+  parts.sort((a, b) => a.from - b.from);
+  const stem = baseName(file.name);
+  return parts.map((part, index) => ({
+    blob: new Blob([part.bytes], { type: "application/pdf" }),
+    name: `${stem}-part${index + 1}.pdf`,
+  }));
+}
+
+async function splitText(file) {
+  const text = await file.text();
+  const parts = [];
+  for (let at = 0; at < text.length; at += TEXT_CHUNK) {
+    let end = Math.min(text.length, at + TEXT_CHUNK);
+    if (end < text.length) {
+      const cut = text.lastIndexOf("\n", end);
+      if (cut > at + TEXT_CHUNK * 0.6) end = cut;
+    }
+    parts.push(text.slice(at, end));
+    at = end - TEXT_CHUNK;
+  }
+  const stem = baseName(file.name);
+  return parts.map((chunk, index) => ({ blob: new Blob([chunk], { type: "text/plain" }), name: `${stem}-part${index + 1}.txt` }));
+}
+
+async function shrinkImage(file) {
+  const bitmap = await createImageBitmap(file);
+  let scale = Math.min(1, 1800 / Math.max(bitmap.width, bitmap.height));
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", Math.max(0.45, 0.82 - attempt * 0.06)));
+    if (blob && blob.size <= MAX_PART) return { blob, name: `${baseName(file.name)}.jpg` };
+    scale *= 0.8;
+  }
+  throw new Error("That photo is too large even after shrinking. Take it again from a bit further away.");
+}
+
+async function prepareUpload(file) {
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".txt") || lower.endsWith(".md") || file.type.startsWith("text/")) return splitText(file);
+  if (file.size <= MAX_PART) return [{ blob: file, name: file.name }];
+  if (lower.endsWith(".pdf") || file.type === "application/pdf") return splitPdf(file);
+  if (file.type.startsWith("image/")) return [await shrinkImage(file)];
+  throw new Error("Word files over 1 MB cannot be split. Save it as a PDF — big PDFs are split for you.");
+}
+
+async function uploadNotes(file, statusNode) {
+  const pieces = await prepareUpload(file);
+  const groupId = (crypto.randomUUID && crypto.randomUUID()) || String(Date.now()) + Math.random().toString(16).slice(2);
+  let saved = 0;
+  try {
+    for (let i = 0; i < pieces.length; i += 1) {
+      statusNode.textContent = pieces.length > 1
+        ? `Large file split into ${pieces.length} parts. Reading part ${i + 1} of ${pieces.length}…`
+        : "Reading your notes…";
+      const form = new FormData();
+      form.append("file", pieces[i].blob, pieces[i].name);
+      form.append("groupId", groupId);
+      form.append("displayName", file.name);
+      form.append("part", String(i + 1));
+      form.append("parts", String(pieces.length));
+      const data = await api("/api/materials/upload", { method: "POST", form });
+      saved += 1;
+      const at = state.materials.findIndex((row) => row.id === data.material.id);
+      if (at >= 0) state.materials[at] = data.material;
+      else state.materials.push(data.material);
+      renderMaterials();
+    }
+  } catch (err) {
+    if (saved) err.message = `${err.message} (Saved ${saved} of ${pieces.length} parts — add the rest later.)`;
+    throw err;
+  } finally {
+    if (saved) {
+      state.teacher.planStale = true;
+      renderToday();
+    }
+  }
+  statusNode.textContent = "";
+  return pieces.length;
 }
 
 function svgEl(name, attrs = {}) {
@@ -642,6 +985,7 @@ async function playLesson(lesson) {
   state.hold = false;
   state.pause = false;
   state.skip = false;
+  state.lessonActive = true;
   $("#class-pause").textContent = "Pause";
   $("#class-setup").hidden = true;
   $("#class-room").hidden = false;
@@ -662,20 +1006,34 @@ async function playLesson(lesson) {
   }
   if (run !== state.runId) return;
   $("#class-progress").textContent = "End of class";
-  if (!state.guest) {
-    api("/api/classroom/complete", { method: "POST", json: { subject: lesson.subject, topic: lesson.topic } })
-      .then(() => {
-        const label = `${lesson.subject}: ${lesson.topic}`;
-        const learned = new Set(state.teacher.learnedTopics || []);
-        learned.add(label);
-        state.teacher.learnedTopics = [...learned];
-        state.teacher.pendingClassSuggestion = null;
-      })
-      .catch(() => {});
-    toast("Class finished. That topic is marked as learned.");
-  }
+  finishLesson(lesson);
 }
 
+/** Marks the topic as taught, frees the class seat, and lets the teacher decide about practice. */
+async function finishLesson(lesson) {
+  state.lessonActive = false;
+  stopBeat();
+  if (state.guest) return;
+  try {
+    await api("/api/classroom/complete", { method: "POST", json: { subject: lesson.subject, topic: lesson.topic } });
+    const label = `${lesson.subject}: ${lesson.topic}`;
+    const learned = new Set(state.teacher.learnedTopics || []);
+    learned.add(label);
+    state.teacher.learnedTopics = [...learned];
+    state.teacher.planStale = true;
+  } catch { /* the class still happened */ }
+  toast("Class finished. That topic is marked as learned.");
+  if (lesson.followUp?.exercise !== false) {
+    try {
+      toast("Your teacher is setting you an exercise…");
+      const exercise = await requestExercise(lesson.topic);
+      toast(`Exercise ready: ${exercise.title}. Find it under Exercises.`);
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+  renderToday();
+}
 function dwell(ms, run) {
   return new Promise((resolve) => {
     const start = Date.now();
@@ -692,6 +1050,10 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function recentBoardText() {
+  return $("#board-stage")?.innerText?.slice(0, 1500) || "";
+}
+
 function stopLesson() {
   state.runId += 1;
   state.hold = false;
@@ -700,15 +1062,88 @@ function stopLesson() {
   state.recog?.abort?.();
 }
 
-function openClass(topic, subject) {
-  showScreen("app");
-  showView("class");
-  if (topic) $("#form-class").topic.value = topic;
-  if (subject) $("#form-class").subject.value = subject;
+function startBeat() {
+  stopBeat();
+  state.beatTimer = setInterval(() => {
+    api("/api/classroom/heartbeat", { method: "POST" }).catch(() => {});
+  }, 30000);
 }
 
-function recentBoardText() {
-  return $("#board-stage")?.innerText?.slice(0, 1500) || "";
+function stopBeat() {
+  if (state.beatTimer) clearInterval(state.beatTimer);
+  state.beatTimer = null;
+}
+
+/** Leaves the class early: stops the board and gives the seat to the next student. */
+function leaveClass() {
+  const wasActive = state.lessonActive;
+  stopLesson();
+  state.lessonActive = false;
+  stopBeat();
+  if (wasActive && !state.guest && localStorage.getItem("sh_token")) {
+    api("/api/classroom/leave", { method: "POST" }).catch(() => {});
+  }
+}
+
+function showQueue(data) {
+  $("#class-queue").hidden = false;
+  $("#class-start-row").hidden = true;
+  $("#queue-text").textContent = data.message || "Class is full. Please wait for your turn.";
+}
+
+function hideQueue() {
+  $("#class-queue").hidden = true;
+  $("#class-start-row").hidden = false;
+}
+
+function renderClassSetup() {
+  setLanguage(state.language);
+  const next = state.teacher?.next;
+  const plan = $("#class-plan");
+  if (!state.materials.length) plan.textContent = "Upload your notes first — your teacher teaches only from them.";
+  else if (next?.topic && next.action !== "exercise") plan.textContent = `Your teacher plans: ${next.topic}${next.reason ? " — " + next.reason : ""}`;
+  else plan.textContent = "Your teacher will pick the topic from your notes.";
+  if (!state.starting) hideQueue();
+}
+
+/** Asks the teacher to start. If every seat is taken, waits in line and starts by itself. */
+async function beginClass() {
+  if (state.starting) return;
+  if (!state.materials.length) {
+    toast("Upload your notes first. Your teacher teaches only from them.");
+    showView("tutor");
+    return;
+  }
+  state.starting = true;
+  unlockSpeech();
+  const button = $("#start-class");
+  busy(button, true, "Setting the board…");
+  try {
+    while (state.starting) {
+      const data = await api("/api/classroom/start", { method: "POST", json: { language: state.language } });
+      if (data.queued) {
+        showQueue(data);
+        await sleep(7000);
+        continue;
+      }
+      hideQueue();
+      state.lesson = data.lesson;
+      state.guest = false;
+      showView("class");
+      startBeat();
+      state.starting = false;
+      await playLesson(data.lesson);
+      break;
+    }
+  } catch (err) {
+    hideQueue();
+    stopBeat();
+    toast(err.message);
+    if (err.data?.code === "no_notes") showView("tutor");
+  } finally {
+    state.starting = false;
+    busy(button, false);
+  }
 }
 
 async function boot() {
@@ -722,7 +1157,7 @@ async function boot() {
     ? "The app server is not answering."
     : setup.ok
       ? ""
-      : "Add GEMINI_API_KEY, GITHUB_TOKEN, GITHUB_OWNER, and AUTH_SECRET before accounts or lessons can be saved. The sample chalkboard still works.";
+      : "Add GEMINI_API_KEY (or add a key in the admin dashboard), GITHUB_TOKEN, GITHUB_OWNER, and AUTH_SECRET before accounts or lessons can be saved. The sample chalkboard still works.";
   banner.hidden = !message;
   appBanner.hidden = !message;
   banner.textContent = message;
@@ -733,18 +1168,23 @@ async function boot() {
     return;
   }
   try {
-    const data = await api("/api/bootstrap");
-    state.profile = data.profile;
-    state.materials = data.materials || [];
-    state.teacher = data.teacher || {};
-    if (!profileComplete(data.profile)) {
-      fillProfileForm();
-      showScreen("profile");
-    } else enterApp();
+    await loadSession();
   } catch (err) {
     if (err.status !== 401) toast(err.message);
     showScreen("auth");
   }
+}
+
+async function loadSession() {
+  const data = await api("/api/bootstrap");
+  state.profile = data.profile;
+  state.materials = data.materials || [];
+  state.teacher = data.teacher || {};
+  if (data.quota) setQuota(data.quota);
+  if (!profileComplete(data.profile)) {
+    fillProfileForm();
+    showScreen("profile");
+  } else enterApp();
 }
 
 $("#tab-login").addEventListener("click", () => {
@@ -771,16 +1211,7 @@ $("#form-login").addEventListener("submit", async (event) => {
       json: { username: event.target.username.value, password: event.target.password.value },
     });
     localStorage.setItem("sh_token", data.token);
-    state.profile = data.profile;
-    if (!profileComplete(data.profile)) {
-      fillProfileForm();
-      showScreen("profile");
-    } else {
-      const bootData = await api("/api/bootstrap");
-      state.materials = bootData.materials || [];
-      state.teacher = bootData.teacher || {};
-      enterApp();
-    }
+    await loadSession();
   } catch (err) { toast(err.message); }
   finally { busy(button, false); }
 });
@@ -803,7 +1234,7 @@ $("#form-register").addEventListener("submit", async (event) => {
     localStorage.setItem("sh_token", data.token);
     state.profile = data.profile;
     state.materials = [];
-    state.teacher = { announcements: [], learnedTopics: [], pendingClassSuggestion: null };
+    state.teacher = { announcements: [], learnedTopics: [], planStale: true };
     fillProfileForm();
     showScreen("profile");
   } catch (err) { toast(err.message); }
@@ -824,14 +1255,18 @@ $("#subject-input").addEventListener("keydown", (event) => {
     $("#subject-add").click();
   }
 });
+$("#profile-level").addEventListener("change", updateLevelUI);
+$("#profile-board").addEventListener("change", updateBoardUI);
 
 $("#form-profile").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!state.subjects.length) {
-    toast("Add at least one subject.");
+    toast(`Add at least one ${event.target.level.value === "college" ? "course" : "subject"}.`);
     return;
   }
   const form = event.target;
+  const board = form.boardChoice.value === "__other" ? form.boardOther.value.trim() : form.boardChoice.value;
+  const college = form.level.value === "college";
   const button = form.querySelector("button[type=submit]");
   busy(button, true, "Saving…");
   try {
@@ -840,20 +1275,24 @@ $("#form-profile").addEventListener("submit", async (event) => {
       json: {
         name: form.name.value,
         age: Number(form.age.value),
+        level: form.level.value,
         grade: form.grade.value,
+        examBoard: board,
+        institution: college ? form.institution.value : "",
+        course: college ? form.course.value : "",
         examDate: form.examDate.value,
         studyHours: Number(form.studyHours.value),
         subjects: state.subjects,
       },
     });
     state.profile = data.profile;
-    if (!state.materials.length && !state.teacher.announcements) {
-      try {
-        const bootData = await api("/api/bootstrap");
-        state.materials = bootData.materials || [];
-        state.teacher = bootData.teacher || {};
-      } catch { /* tutor still opens */ }
-    }
+    if (state.teacher) state.teacher.planStale = true;
+    try {
+      const bootData = await api("/api/bootstrap");
+      state.materials = bootData.materials || [];
+      state.teacher = bootData.teacher || {};
+      if (bootData.quota) setQuota(bootData.quota);
+    } catch { /* the app still opens */ }
     enterApp();
   } catch (err) { toast(err.message); }
   finally { busy(button, false); }
@@ -866,14 +1305,18 @@ $("#profile-cancel").addEventListener("click", () => {
 
 $("#sign-out").addEventListener("click", () => {
   if (state.guest) {
-    stopLesson();
+    leaveClass();
     state.guest = false;
     showScreen("auth");
     return;
   }
+  const wasWaiting = state.starting;
+  state.starting = false;
+  leaveClass();
+  if (wasWaiting) api("/api/classroom/leave", { method: "POST" }).catch(() => {});
   localStorage.removeItem("sh_token");
-  stopLesson();
   state.profile = null;
+  state.quota = null;
   showScreen("auth");
 });
 
@@ -883,10 +1326,12 @@ $$("[data-nav]").forEach((button) => button.addEventListener("click", () => {
     return;
   }
   showView(button.dataset.nav);
+  if (button.dataset.nav === "today") ensurePlan();
 }));
-$("#go-tutor").addEventListener("click", () => {
+$("#go-home").addEventListener("click", () => {
   if (state.guest) return;
-  showView("tutor");
+  showView("today");
+  ensurePlan();
 });
 $("#open-class").addEventListener("click", () => {
   if (state.guest) return;
@@ -894,6 +1339,25 @@ $("#open-class").addEventListener("click", () => {
 });
 $$("[data-lang]").forEach((button) => button.addEventListener("click", () => setLanguage(button.dataset.lang)));
 $("#open-info").addEventListener("click", () => $("#info-modal").showModal());
+
+$("#today-go").addEventListener("click", async (event) => {
+  const action = event.currentTarget.dataset.action;
+  if (action === "exercise-open") {
+    showView("exercises");
+  } else if (action === "exercise-new") {
+    showView("exercises");
+    const button = $("#form-exercise button");
+    busy(button, true, "Your teacher is writing it…");
+    try { await requestExercise(); renderExerciseView(); } catch (err) { toast(err.message); } finally { busy(button, false); }
+  } else {
+    showView("class");
+    beginClass();
+  }
+});
+$("#today-notes").addEventListener("click", () => {
+  showView("tutor");
+  $("#file-input").focus();
+});
 
 $("#form-chat").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -912,7 +1376,10 @@ $("#form-chat").addEventListener("submit", async (event) => {
     });
     state.history.push({ role: "assistant", content: data.reply });
     addMessage("assistant", data.reply);
-  } catch (err) { toast(err.message); }
+  } catch (err) {
+    state.history.pop();
+    addMessage("assistant", err.message);
+  }
   finally { busy(button, false); }
 });
 $("#chat-input").addEventListener("keydown", (event) => {
@@ -922,82 +1389,68 @@ $("#chat-input").addEventListener("keydown", (event) => {
   }
 });
 
+$("#file-input").addEventListener("change", () => {
+  const file = $("#file-input").files[0];
+  const label = $("#file-label");
+  if (!file) {
+    label.textContent = "Choose PDF, DOCX or photo";
+    return;
+  }
+  const mb = (file.size / 1048576).toFixed(1);
+  label.textContent = file.size > MAX_PART ? `${file.name} (${mb} MB — will be split)` : `${file.name} (${mb} MB)`;
+});
+
 $("#form-upload").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (state.uploading) return;
   const file = $("#file-input").files[0];
   if (!file) {
     toast("Choose a file first.");
     return;
   }
-  const form = new FormData();
-  form.append("file", file);
-  form.append("subject", event.target.subject.value.trim());
   const button = event.target.querySelector("button");
-  busy(button, true, "Reading…");
+  const status = $("#upload-status");
+  state.uploading = true;
+  busy(button, true, "Working…");
   try {
-    const data = await api("/api/materials/upload", { method: "POST", form });
-    state.materials.push(data.material);
-    renderMaterials();
+    status.textContent = file.size > MAX_PART ? "Splitting the file into parts under 1 MB…" : "Reading your notes…";
+    const parts = await uploadNotes(file, status);
     event.target.reset();
-    toast(`Found ${data.material.topics.length} topics in ${data.material.name}.`);
-  } catch (err) { toast(err.message); }
-  finally { busy(button, false); }
-});
-
-$("#build-week").addEventListener("click", async () => {
-  const button = $("#build-week");
-  busy(button, true, "Planning…");
-  try {
-    const data = await api("/api/timetable/generate", { method: "POST", json: { language: state.language } });
-    state.teacher.timetable = data.timetable;
-    localStorage.setItem("sh_timetable", JSON.stringify(data.timetable));
-    renderTimetable();
-  } catch (err) { toast(err.message); }
-  finally { busy(button, false); }
-});
-
-$("#refresh-vision").addEventListener("click", async () => {
-  const button = $("#refresh-vision");
-  busy(button, true, "Writing…");
-  try {
-    const data = await api("/api/vision/refresh", { method: "POST", json: {} });
-    state.teacher.vision = data.vision;
-    state.teacher.announcements = data.announcements;
-    if (data.vision?.nextTopic) {
-      state.teacher.pendingClassSuggestion = { topic: data.vision.nextTopic, subject: data.vision.nextSubject || "" };
-    }
-    localStorage.setItem("sh_vision", JSON.stringify(data.vision));
-    renderVision();
-  } catch (err) { toast(err.message); }
-  finally { busy(button, false); }
+    $("#file-label").textContent = "Choose PDF, DOCX or photo";
+    toast(parts > 1 ? `Added ${file.name} in ${parts} parts.` : `Added ${file.name} to your notes.`);
+    ensurePlan(true);
+  } catch (err) {
+    status.textContent = "";
+    toast(err.message);
+  } finally {
+    state.uploading = false;
+    busy(button, false);
+  }
 });
 
 $("#edit-profile").addEventListener("click", () => {
   fillProfileForm();
   showScreen("profile");
 });
-$("#teach-next").addEventListener("click", () => {
-  const pending = state.teacher.pendingClassSuggestion || {};
-  openClass(pending.topic, pending.subject);
-});
 
 $("#form-exercise").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!state.materials.length) {
+    toast("Upload your notes first. Your teacher sets practice from them.");
+    return;
+  }
   const button = event.target.querySelector("button");
-  busy(button, true, "Writing questions…");
+  busy(button, true, "Your teacher is writing it…");
   try {
-    const data = await api("/api/exercises/generate", {
-      method: "POST",
-      json: {
-        subject: event.target.subject.value,
-        topic: event.target.topic.value,
-        language: state.language,
-      },
-    });
-    state.exercise = data.exercise;
-    renderQuestions(data.exercise);
+    await requestExercise();
+    renderExerciseView();
   } catch (err) { toast(err.message); }
   finally { busy(button, false); }
+});
+
+$("#answer-file").addEventListener("change", () => {
+  const file = $("#answer-file").files[0];
+  $("#answer-file-label").textContent = file ? file.name : "Optional answer sheet (PDF or photo, up to 1 MB)";
 });
 
 $("#form-answers").addEventListener("submit", async (event) => {
@@ -1006,7 +1459,15 @@ $("#form-answers").addEventListener("submit", async (event) => {
   const button = event.target.querySelector("button[type=submit]");
   busy(button, true, "Grading…");
   try {
-    const file = $("#answer-file").files[0];
+    let file = $("#answer-file").files[0];
+    if (file && file.size > MAX_PART) {
+      if (file.type.startsWith("image/")) {
+        const small = await shrinkImage(file);
+        file = new File([small.blob], small.name, { type: "image/jpeg" });
+      } else {
+        throw new Error("Keep the answer sheet under 1 MB. Photos are shrunk for you; for a PDF, export a smaller one.");
+      }
+    }
     let data;
     if (file) {
       const form = new FormData();
@@ -1020,41 +1481,29 @@ $("#form-answers").addEventListener("submit", async (event) => {
         json: { exerciseId: state.exercise.id, answers: collectAnswers() },
       });
     }
+    state.exercise.graded = true;
+    const row = (state.teacher.exercises || []).find((item) => item.id === state.exercise.id);
+    if (row) row.graded = true;
+    state.teacher.results = [...(state.teacher.results || []), {
+      topic: state.exercise.topic,
+      subject: state.exercise.subject,
+      score: data.grade.score,
+      max: data.grade.maxScore,
+    }].slice(-8);
+    state.teacher.planStale = true;
     renderGrade(data.grade);
   } catch (err) { toast(err.message); }
   finally { busy(button, false); }
 });
 
-$("#form-class").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  unlockSpeech();
-  const form = event.target;
-  const button = $("#start-class");
-  busy(button, true, "Setting the board…");
-  try {
-    const data = await api("/api/classroom/start", {
-      method: "POST",
-      json: { subject: form.subject.value, topic: form.topic.value, language: state.language },
-    });
-    state.lesson = data.lesson;
-    state.guest = false;
-    await playLesson(data.lesson);
-  } catch (err) { toast(err.message); }
-  finally { busy(button, false); }
+$("#start-class").addEventListener("click", beginClass);
+$("#queue-leave").addEventListener("click", () => {
+  state.starting = false;
+  hideQueue();
+  api("/api/classroom/leave", { method: "POST" }).catch(() => {});
+  toast("You left the line.");
 });
-
-$("#suggest-topic").addEventListener("click", async () => {
-  const button = $("#suggest-topic");
-  busy(button, true, "Looking…");
-  try {
-    const data = await api("/api/classroom/suggest", { method: "POST", json: {} });
-    $("#form-class").subject.value = data.suggestion.subject || "";
-    $("#form-class").topic.value = data.suggestion.topic || "";
-    if (data.suggestion.reason) toast(data.suggestion.reason);
-    state.teacher.pendingClassSuggestion = data.suggestion;
-  } catch (err) { toast(err.message); }
-  finally { busy(button, false); }
-});
+$("#queue-notes").addEventListener("click", () => showView("tutor"));
 
 function startSample() {
   unlockSpeech();
@@ -1067,6 +1516,7 @@ function startSample() {
     $("#guest-note").hidden = false;
     $("#sign-out").textContent = "Back";
     $$("[data-nav]").forEach((button) => { button.setAttribute("aria-current", "false"); });
+    renderQuota();
   }
   showView("class");
   playLesson(lesson);
@@ -1132,7 +1582,7 @@ $("#hand-send").addEventListener("click", async () => {
   const button = $("#hand-send");
   busy(button, true, "Thinking…");
   try {
-    let answer = "Hold that thought. On the sample board I cannot call the tutor — register, add your keys, and raise your hand in a live class.";
+    let answer = "Hold that thought. On the sample board I cannot call the teacher — register, upload your notes, and raise your hand in a live class.";
     let speech = "Ask me again once the live class is connected.";
     if (!state.guest && state.lesson && state.lesson !== SAMPLE_LESSON) {
       const data = await api("/api/classroom/ask", {
@@ -1158,13 +1608,27 @@ $("#hand-send").addEventListener("click", async () => {
   finally { busy(button, false); }
 });
 $("#class-leave").addEventListener("click", () => {
-  stopLesson();
+  leaveClass();
   $("#class-room").hidden = true;
   $("#class-setup").hidden = false;
   $("#hand-panel").hidden = true;
   if (state.guest) {
     state.guest = false;
     showScreen("auth");
+    return;
+  }
+  renderClassSetup();
+});
+
+window.addEventListener("pagehide", () => {
+  if ((state.lessonActive || state.starting) && !state.guest) {
+    try {
+      fetch("/api/classroom/leave", {
+        method: "POST",
+        keepalive: true,
+        headers: { Authorization: `Bearer ${localStorage.getItem("sh_token") || ""}` },
+      });
+    } catch { /* the seat frees itself after a minute */ }
   }
 });
 
